@@ -1,0 +1,11 @@
+services:
+  followup:
+    build: .
+    image: patient-followup-assistant:latest
+    ports:
+      - "8501:8501"
+    env_file: .env
+    volumes:
+      - ./storage:/app/storage          # used when STORAGE_BACKEND=local
+      - ./vectorstore:/app/vectorstore  # persistent ChromaDB index
+    restart: unless-stopped
