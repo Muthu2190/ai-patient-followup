@@ -34,7 +34,12 @@ class Settings:
         default_factory=lambda: _env("OPENAI_EMBEDDING_MODEL", "text-embedding-3-small")
     )
     google_api_key: str = field(default_factory=lambda: _env("GOOGLE_API_KEY"))
-    gemini_model: str = field(default_factory=lambda: _env("GEMINI_MODEL", "gemini-1.5-flash"))
+    gemini_model: str = field(default_factory=lambda: _env("GEMINI_MODEL", "gemini-2.5-flash"))
+    gemini_embedding_model: str = field(
+        default_factory=lambda: _env("GEMINI_EMBEDDING_MODEL", "models/gemini-embedding-001")
+    )
+    # Embeddings: "auto" (same provider as the LLM), "openai", "gemini" or "hashing" (offline).
+    embedding_provider: str = field(default_factory=lambda: _env("EMBEDDING_PROVIDER", "auto").lower())
 
     # Storage: "local" (folder that mirrors the S3 layout) or "s3".
     storage_backend: str = field(default_factory=lambda: _env("STORAGE_BACKEND", "local").lower())

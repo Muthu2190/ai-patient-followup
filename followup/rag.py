@@ -10,6 +10,7 @@ import hashlib
 import logging
 import math
 import re
+import time
 from functools import lru_cache
 from typing import Any
 
@@ -50,20 +51,58 @@ class HashingEmbeddings(Embeddings):
         return self._embed(text)
 
 
+class RetryingEmbeddings(Embeddings):
+    """Wraps a remote embedder: retries transient network errors, then falls
+    back to local hashing embeddings so a flaky connection never crashes the app.
+    """
+
+    def __init__(self, inner: Embeddings, attempts: int = 3, backoff_seconds: float = 1.5):
+        self.inner = inner
+        self.attempts = attempts
+        self.backoff_seconds = backoff_seconds
+        self._fallback = HashingEmbeddings()
+
+    def _call_with_retry(self, fn, *args):
+        last_exc: Exception | None = None
+        for attempt in range(1, self.attempts + 1):
+            try:
+                return fn(*args)
+            except Exception as exc:  # noqa: BLE001 - broad: network/SDK errors vary by provider
+                last_exc = exc
+                log.warning(
+                    "Embedding call failed (attempt %d/%d): %s", attempt, self.attempts, exc
+                )
+                if attempt < self.attempts:
+                    time.sleep(self.backoff_seconds * attempt)
+        log.warning("Embedding provider unavailable after %d attempts (%s); using hashing embeddings", self.attempts, last_exc)
+        return None
+
+    def embed_documents(self, texts: list[str]) -> list[list[float]]:
+        result = self._call_with_retry(self.inner.embed_documents, texts)
+        return result if result is not None else self._fallback.embed_documents(texts)
+
+    def embed_query(self, text: str) -> list[float]:
+        result = self._call_with_retry(self.inner.embed_query, text)
+        return result if result is not None else self._fallback.embed_query(text)
+
+
 def get_embeddings() -> tuple[Embeddings, str]:
-    provider = settings.resolved_llm_provider
+    provider = settings.embedding_provider
+    if provider == "auto":
+        provider = settings.resolved_llm_provider
     try:
         if provider == "openai":
             from langchain_openai import OpenAIEmbeddings
 
-            return OpenAIEmbeddings(model=settings.openai_embedding_model, api_key=settings.openai_api_key), "openai"
+            inner = OpenAIEmbeddings(model=settings.openai_embedding_model, api_key=settings.openai_api_key)
+            return RetryingEmbeddings(inner), "openai"
         if provider == "gemini":
             from langchain_google_genai import GoogleGenerativeAIEmbeddings
 
-            return (
-                GoogleGenerativeAIEmbeddings(model="models/text-embedding-004", google_api_key=settings.google_api_key),
-                "gemini",
+            inner = GoogleGenerativeAIEmbeddings(
+                model=settings.gemini_embedding_model, google_api_key=settings.google_api_key
             )
+            return RetryingEmbeddings(inner), "gemini"
     except Exception as exc:
         log.warning("Embedding provider %s unavailable (%s); using hashing embeddings", provider, exc)
     return HashingEmbeddings(), "hashing"
